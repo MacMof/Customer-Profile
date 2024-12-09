@@ -1,0 +1,2312 @@
+-- DROP PROCEDURE dw_prf.sp_customer_profile_mly(int4);
+
+CREATE OR REPLACE PROCEDURE dw_prf.sp_customer_profile_mly(p_yr_mth_to_do int4)
+	LANGUAGE plpgsql
+AS $$
+	
+
+
+
+-- This procedure loads table :  dw_prf.customer_profile_mly
+
+--command example:   call dw_prf.sp_customer_profile_mly(202410);
+
+
+-- Input tables:
+--    dw_fnd.dim_customer
+--    dw_fnd.dim_customer_portfolio
+--    dw_prf.vs_calendar_wfs
+--    dw_fnd.wfs_all_prod_mnth
+--    dw_prf.vw_wfs_stmt_st_crd_ploan
+--    dw_fnd.fnd_wfs_customer_absa
+--    dw_fnd.fnd_wfs_crd_acc_mly
+--    dw_fnd.fnd_wfs_sc_emboss
+--    dw_fnd.fnd_wfs_crd_plstc_mly
+--    dw_fnd.dim_oneapp_subscriber
+--    dw_fnd.wfs_oneapp_subscr_status_hist
+--    dw_fnd.cust_basket_tender
+--    dw_fnd.dim_location
+--    dw_prf.vw_dim_customer_race
+--    dw_fnd_tu.fnd_ach
+--    dw_fnd_tu.fnd_cc7_01
+--    dw_fnd_tu.fnd_cc7_02
+--    dw_fnd_tu.fnd_cc7_15
+--    dw_fnd_tu.fnd_cc7_17
+--    dw_fnd_tu.fnd_cc7_18
+--    dw_fnd_tu.fnd_scr
+
+--    dw_aux.cust_profile_loyalty_tier
+--    dw_aux.cust_profile_scpl_status
+--    dw_aux.cust_profile_block_code
+--    dw_aux.cust_profile_cc_status
+      
+
+
+-- modification history  ---------------------------------------------------
+-- 2024-11-06 Una Bvumbi - created.
+-- 2024-11-13 N Chauhan - productionised.
+-- 2024-11-13 N Chauhan - parameterized and logging incorporated.
+-- 2024-11-13 N Chauhan - remove looping, which is to be done in calling proc
+
+
+
+
+
+declare
+
+   c_log_comment varchar(50):= 'customer profiling';
+   c_target_tbl varchar(50) := 'customer_profile_mly';
+   c_target_schema varchar(50) := 'dw_prf';
+   c_thisproc varchar(50) := 'sp_'||c_target_tbl;
+   v_msg varchar(200);
+
+
+   v_start_dt date;
+   v_end_dt date;
+   v_mth_to_do integer;
+   v_sales_start_dt date;
+   v_loc_start_dt date;
+   row_cnt integer;
+   now_fmt varchar;
+--   v_proc_name varchar := 'sp_customer_profile_mly';
+
+--   p_date_start date;
+--   p_date_end date;
+   v_date_to_do date;
+   v_date_end date;
+
+   v_ins_rows_cnt integer;
+   v_upd_rows_cnt integer;
+
+ 
+begin
+      
+--   raise notice '---------------------------------------------------------';
+--   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+
+--   raise notice '%  customer_profile_mly executing ... for month: %', now_fmt, p_yr_mth_to_do;  -- display in cosole
+   v_msg:= to_char(sysdate,'yyyy-mm-dd hh24:mi:ss ')||c_thisproc||' executing... for month: '||p_yr_mth_to_do;
+   raise notice '%',v_msg;  -- display in cosole
+   
+   
+   ----- Date Inputs --------------------------
+--   p_date_start = date_trunc('month', current_date) - interval '1 month';
+--   p_date_end = date_trunc('month', current_date) - interval '1 day';
+
+
+
+
+   ----- Override Dates - Extract History -----
+-- p_date_start = '01/JAN/2023';
+-- p_date_end = '31/OCT/2024';
+   --------------------------------------------
+
+
+--   v_date_end = date_trunc('month', nvl(p_date_end, p_date_start));
+--   
+--   raise info 'p_date_start = % | p_date_end = %', p_date_start, p_date_end;
+--   raise info 'v_date_end = %', v_date_end;
+--    raise notice '-----';
+--   
+--if date_cmp(v_date_end, p_date_start ) = -1 or p_date_start is null then
+--   raise notice 'date_to earlier than date_start or date_start is missing. Process aborted.'; -- display in cosole
+--end if;
+
+
+--   v_date_to_do = p_date_start;
+
+
+--while date_cmp(v_date_end, v_date_to_do ) >= 0
+--loop
+--   raise info 'loop: %', v_date_to_do; -- display in cosole
+
+
+-- log entry -----------------------------------------------------
+  
+call dw_admin.sp_log_insert(
+      c_thisproc, --v_proc_name,
+      c_target_schema,
+      c_target_tbl,
+      v_end_dt,  --v_date_to_do,
+      'year_month processed', 
+      p_yr_mth_to_do,  
+      'load ' || v_start_dt ||' - ' || v_end_dt );  
+
+
+
+   
+--   v_start_dt = date_trunc('month', v_date_to_do);
+   v_start_dt = to_date(p_yr_mth_to_do,'yyyymm');
+--   v_end_dt = last_day(v_date_to_do);
+   v_end_dt = last_day(v_start_dt);
+    
+   v_mth_to_do = p_yr_mth_to_do;  --cast(to_char(v_start_dt, 'yyyymm') as int);
+   v_sales_start_dt = v_start_dt - interval '23 month';
+   v_loc_start_dt =  v_start_dt - interval '11 month';
+   
+   raise info 'v_start_dt = % | v_end_dt = %', v_start_dt, v_end_dt;
+   raise info 'v_mth_to_do = %', v_mth_to_do;
+   raise info '24 month period v_sales_start_dt = %', v_sales_start_dt;
+   raise info '12 month period v_loc_start_dt = %', v_loc_start_dt;
+
+
+   ------------------------------------
+   ------ CUSTOMER PORTFOLIO ----------
+   ------------------------------------
+   
+   DROP table if exists tmp_cust_portfolio;
+   CREATE temporary TABLE tmp_cust_portfolio
+   (
+   customer_no                      decimal(21,0),
+   ww_flag                          decimal(1,0),
+   littleworld_flag                 decimal(1,0),
+   myschool_flag                    decimal(1,0),
+   wwdifference_flag                decimal(1,0),
+   wodifference_flag                decimal(1,0),
+   discovery_flag                   decimal(1,0),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+   
+   insert into tmp_cust_portfolio (
+         customer_no,
+         ww_flag,
+         littleworld_flag,
+         myschool_flag,
+         wwdifference_flag,
+         wodifference_flag,
+         discovery_flag
+   )
+   with  
+      my_cust as
+      (
+         select
+            t1.customer_no
+         from dw_fnd.dim_customer t1
+      )
+      select 
+         t1.customer_no,
+         max(case when t2.product_code_no in (99,19,28,29) then 1 else 0 end) as ww_flag,
+         max(case when t2.product_code_no in (99) then 1 else 0 end) as littleworld_flag,
+         max(case when t2.product_code_no in (19) then 1 else 0 end) as myschool_flag,
+         max(case when t2.product_code_no in (28) then 1 else 0 end) as wwdifference_flag,
+         max(case when t2.product_code_no in (29) then 1 else 0 end) as wodifference_flag,
+         max(case when t2.product_code_no in (92) then 1 else 0 end) as discovery_flag
+      from my_cust t1
+      left join dw_fnd.dim_customer_portfolio  t2 on t1.customer_no = t2.customer_no               
+      where t2.portfolio_create_date <= v_end_dt
+         and upper(t2.portfolio_status_desc) in ('ACTIVE','OPEN')
+            and t2.product_code_no in (99,19,28,29,92)
+      group by t1.customer_no
+   ;
+   --Closed date not reliable >> there are 'Active' profiles with closed date
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (cust_portfolio) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ SCPL ACCOUNTS ---------------
+   ------------------------------------
+   
+   DROP table if exists tmp_account_scpl;
+   CREATE temporary TABLE tmp_account_scpl
+   (
+   year_month                       decimal(6),
+   customer_no                      decimal(21,0),
+   id_number                        varchar(15),
+   wfs_customer_no                  decimal(30,0),
+   wfs_account_no                   decimal(30,0),
+   product                          varchar(5),
+   account_status                   varchar(5),
+   delinquency_cycle                   varchar(5),
+   current_balance                  decimal(30,2),
+   credit_limit                     decimal(30,2),
+   open_to_buy                      decimal(30,2),
+   date_opened                      date,
+   date_closed                      date,
+   mob                           decimal(10,0),
+   date_chgoff                      date,
+   date_last_stmt                   date,
+   block_code1                      varchar(1),
+   block_code2                      varchar(1),
+   shopable_ind                     varchar(1),
+   bureau_score                     decimal(10,0),
+   behaviour_score01                   decimal(10,0),
+   scpl_class                       varchar(50),
+   scpl_flag                        decimal(1,0),
+   
+   PRIMARY KEY(id_number)
+   )
+   DISTSTYLE KEY
+   DISTKEY(id_number)
+   SORTKEY(id_number)
+   ;
+   
+   insert into tmp_account_scpl (
+         year_month, 
+         customer_no, 
+         id_number, 
+         wfs_customer_no, 
+         wfs_account_no, 
+         product, 
+         account_status, 
+         delinquency_cycle, 
+         current_balance, 
+         credit_limit, 
+         open_to_buy, 
+         date_opened, 
+         date_closed, 
+         mob, 
+         date_chgoff, 
+         date_last_stmt, 
+         block_code1, 
+         block_code2, 
+         shopable_ind, 
+         bureau_score, 
+         behaviour_score01, 
+         scpl_class, 
+         scpl_flag
+   )
+   with 
+      my_dates as
+      (
+         select 
+            t2.cal_year_month_no,
+            t2.cal_year_no,
+            t2.cal_month_no,
+               min(t2.calendar_date) as month_start_dt,
+            max(t2.calendar_date) as month_end_dt,
+            t2.cal_year_month_no as max_cycle,
+            trunc(date_trunc('month', t2.calendar_date) - interval '1 day') as lm_date,
+            extract(year from add_months(t2.calendar_date,-1)) as lm_year_no,
+            extract(month from add_months(t2.calendar_date,-1)) as lm_month_no
+         from dw_prf.vs_calendar_wfs t2
+         where t2.calendar_date between v_start_dt and v_end_dt
+         group by 
+            t2.cal_year_month_no,
+            t2.cal_year_no,
+            t2.cal_month_no,
+            lm_date,
+            lm_year_no,
+            lm_month_no
+      )
+      , 
+      my_id as
+      (
+         select
+            t4.identity_document_code,
+            max(t4.customer_no) as customer_no
+         from dw_fnd.dim_customer t4
+          where t4.identity_document_code not in ('0')
+            and t4.identity_document_code  is not null
+         group by t4.identity_document_code
+      )
+      , 
+      my_statement as
+      (
+         select 
+            t2.cal_year_month_no as cycle_6,
+            t5.wfs_customer_no,
+            t5.wfs_account_no,
+            t5.product_code_no as product_no,
+            t5.account_status,
+            t5.delinquency_cycle,
+            t5.statement_date as stmt_date_last_statement
+         from dw_prf.vw_wfs_stmt_st_crd_ploan  t5
+         inner join my_dates t2 on t5.cycle_6 = t2.max_cycle
+         where t5.product_code_no in (1,2,3,4,5,6,7,9,21, 11,15,16)
+      ) 
+      ,   
+      prevmonth_details as
+      (
+         select
+            t2.cal_year_month_no,
+            t2.cal_year_no,
+            t2.cal_month_no,
+            t6.wfs_account_no,
+            t6.account_status as lm_account_status,
+            t6.credit_limit as lm_credit_limit,
+            t6.date_closed as lm_date_closed
+         from dw_fnd.wfs_all_prod_mnth t6
+         inner join my_dates t2 on t6.cal_year_no = t2.lm_year_no and t6.cal_month_no = t2.lm_month_no
+         where t6.product_code_no in (1,2,3,4,5,6,7,9,21, 11,15,16)
+      )
+      ,
+      my_acc as
+      (
+         select
+            t2.cal_year_month_no as year_month,
+            t4.customer_no as customer_no,
+            t1.identity_no as id_number,
+            t1.wfs_customer_no,  
+            t1.wfs_account_no,   
+               case 
+               when t1.product_code_no in (1,2,3,4,5,6,7,9,21) then 'SC'
+               when t1.product_code_no in (11,15,16) then 'PL'
+               else 'NA' 
+            end as product,
+            t1.account_status,
+            t5.delinquency_cycle,
+            t1.current_balance,
+            t1.credit_limit,
+            t1.open_to_buy,
+            t1.date_opened,
+            t1.date_closed,
+            cast(to_char(t1.date_opened, 'yyyymm') as int) as date_opened_ym,
+            cast(to_char(t1.date_closed, 'yyyymm') as int) as date_closed_ym,
+            case when t1.date_closed is not null then 0 else trunc(months_between(t2.month_end_dt,t1.date_opened)) end as mob,
+            t1.date_chgoff,
+            t1.date_last_stmt,
+            t6.lm_credit_limit,
+            t6.lm_account_status,
+            t6.lm_date_closed,
+            t1.block_code1,
+            t1.block_code2,
+            coalesce(t1.block_code1,t1.block_code2) as block_code,
+            case 
+               when t1.account_status in ('A','D','I') 
+                  and coalesce(t5.delinquency_cycle,'0') in ('0','1')   then 'Y'       
+               else 'N' 
+            end as shopable_ind,
+            t1.bureau_score,
+            t1.behaviour_score01,
+      
+            row_number() over(
+               partition by 
+                     t2.cal_year_month_no, 
+                     case 
+                        when t1.product_code_no in (1,2,3,4,5,6,7,9,21) then 'SC'
+                        when t1.product_code_no in (11,15,16) then 'PL'
+                        else 'NA' 
+                     end,
+                     t1.identity_no
+               order by 
+                     case 
+                        when t1.account_status = 'A' then 1 
+                        when t1.account_status = 'D' then 2
+                        when t1.account_status = 'I' then 3
+                        else 888 
+                     end,
+                     case when t1.block_code1 is null and t1.block_code2 is null then 1 else 888 end,
+                     t1.date_opened desc,
+                     t1.date_last_stmt desc
+            ) as cust_row
+         from dw_fnd.wfs_all_prod_mnth t1 
+         inner join my_dates t2 on t1.cal_year_no = t2.cal_year_no and t1.cal_month_no = t2.cal_month_no
+          left join my_id t4 on t1.identity_no = t4.identity_document_code
+         left join my_statement t5 
+            on t5.cycle_6 = t2.cal_year_month_no 
+            and t1.wfs_account_no = t5.wfs_account_no
+            and t1.product_code_no = t5.product_no
+            and t1.wfs_customer_no = t5.wfs_customer_no
+         left join prevmonth_details t6 on t2.cal_year_month_no = t6.cal_year_month_no and t1.wfs_account_no = t6.wfs_account_no
+         where t1.product_code_no in (1,2,3,4,5,6,7,9,21, 11,15,16)
+      )
+      select 
+         t1.year_month,
+         t1.customer_no,
+         t1.id_number,
+         t1.wfs_customer_no,  
+         t1.wfs_account_no, 
+         t1.product,
+         t1.account_status,
+         t1.delinquency_cycle,
+         t1.current_balance,
+         t1.credit_limit,
+         t1.open_to_buy,
+         t1.date_opened,
+         t1.date_closed,
+         t1.mob,
+         t1.date_chgoff,
+         t1.date_last_stmt,
+         t1.block_code1,
+         t1.block_code2,
+         t1.shopable_ind,
+         t1.bureau_score,
+         t1.behaviour_score01,
+              
+         case 
+            when t1.date_closed is not null and t1.account_status in ('A', 'D', 'I')
+               and t3.block_code_desc is not null
+                  then 'Closed'|| ' - ' || trim(t3.block_code_desc)
+            when t1.date_closed is not null and t1.account_status in ('A', 'D', 'I')
+               then 'Closed'|| ' - ' || trim(t2.short_desc)
+            when t1.account_status not in ('A', 'D', 'I') then trim(t2.short_desc)
+            when t3.block_code is not null then trim(t2.short_desc) || ' - ' || trim(t3.block_code_desc)
+            when t1.delinquency_cycle = 'S' then 'Special Arrangment'
+            when t1.delinquency_cycle = 'W' then 'Written-Off'
+            when t1.date_opened_ym = t1.year_month then 'New Account'
+            when t1.account_status = 'A' and t1.delinquency_cycle is null then 'Active - No DC'
+            when t1.account_status = 'A' and t1.delinquency_cycle = '0' then 'Active - In Order'
+            when t1.account_status = 'A' and t1.delinquency_cycle in ('1','2','3','4','5','6','7','8') then 'Active - Delinquent'
+            when t1.account_status = 'D' and t1.delinquency_cycle in ('1','2','3','4','5','6','7','8') then 'Dormant - Delinquent'
+            else t2.short_desc 
+         end as scpl_class,
+                
+         case 
+            when (t1.credit_limit > 1 
+                 or t1.account_status in ('8')
+                 or t1.date_closed_ym = t1.year_month)
+               and length(trim(replace(t1.id_number,'0',''))) > 0
+               and t1.customer_no is not null
+               and (t1.account_status in ('A', 'D', 'I')
+                   and (t1.date_closed is null
+                       or (t1.date_closed_ym = t1.year_month
+                          and t1.lm_credit_limit > 1
+                          and t1.lm_date_closed is null)
+                      )
+                  or (t1.account_status = '8'
+                     and t1.date_closed_ym = t1.year_month)
+                     and t1.lm_credit_limit > 1
+                      and t1.lm_date_closed is null)
+               and coalesce(t1.delinquency_cycle,'0') not in ('7','8','W')
+               and (t3.reactivate is null or t3.reactivate = 'Y' or (t3.reactivate = 'N/Y' and t1.account_status <> 'Z'))
+               and t1.cust_row = 1
+                     then 1 else 0 
+         end as scpl_flag
+      from my_acc t1
+      left join dw_aux.cust_profile_scpl_status t2 on t1.account_status = t2.status
+      left join dw_aux.cust_profile_block_code t3 on t3.block_code = t1.block_code
+      where scpl_flag = 1
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (account_scpl) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ CC ACCOUNTS -----------------
+   ------------------------------------
+   
+   DROP table if exists tmp_account_cc;
+   CREATE temporary TABLE tmp_account_cc
+   (
+   year_month                       decimal(6,0),
+   customer_no                      decimal(21,0),
+   id_number                        varchar(15),
+   customer_key                     varchar(20),
+   cc_account_no                    decimal(30,0),
+   cc_colour                        varchar(10),
+   cc_date_opened                      date,
+   cc_date_closed                      date,
+   cc_status_date                      date,
+   cc_mob                           decimal(10,0),
+   cc_account_status                   varchar(5),
+   cc_delinquency_cycle                decimal(10,0),
+   cc_shopable_ind                  varchar(1),
+   cc_current_balance                  decimal(30,2),
+   cc_credit_limit                     decimal(30,2),
+   cc_otb                           decimal(30,2),
+   cc_secondary_card_ind               varchar(1),
+   cc_class                         varchar(50),
+   cc_flag                       decimal(1,0),
+   
+   PRIMARY KEY(id_number)
+   )
+   DISTSTYLE KEY
+   DISTKEY(id_number)
+   SORTKEY(id_number)
+   ;
+   
+   insert into tmp_account_cc (
+         year_month,
+         customer_no,
+         id_number,
+         customer_key,
+         cc_account_no,
+         cc_colour,
+         cc_date_opened,
+         cc_date_closed,
+         cc_status_date,
+         cc_mob,
+         cc_account_status,
+         cc_delinquency_cycle,
+         cc_shopable_ind,
+         cc_current_balance,
+         cc_credit_limit,
+         cc_otb,
+         cc_secondary_card_ind,
+         cc_class, 
+         cc_flag
+   )
+   with
+      my_dates as
+      (
+         select 
+            t0.cal_year_month_no,
+            t0.cal_year_no,
+            t0.cal_month_no,
+            min(t0.calendar_date) as month_start_dt,
+            max(t0.calendar_date) as month_end_dt,
+            trunc(date_trunc('month', t0.calendar_date) - interval '1 day') as lm_date
+         from dw_prf.vs_calendar_wfs t0
+         where t0.calendar_date between v_start_dt and v_end_dt
+         group by t0.cal_year_month_no,
+                t0.cal_year_no,
+                t0.cal_month_no,
+                lm_date
+      )
+      , 
+      my_id as
+       (
+          select 
+            t2.customer_key,
+             t2.id_number,
+            t2.secondary_card_indicator
+         from dw_fnd.fnd_wfs_customer_absa t2
+      )
+      , 
+      my_cust as
+      (
+         select 
+            t3.identity_document_code,
+            max(t3.customer_no) as customer_no
+         from dw_fnd.dim_customer t3
+          where t3.identity_document_code not in ('0')
+            and t3.identity_document_code is not null
+         group by t3.identity_document_code
+      )
+      ,    
+      prevmonth_details as
+      (
+         select 
+            t0.cal_year_month_no,
+            t0.month_end_dt,
+            t4.account_number,
+            t4.card_account_status_code as lm_account_status,
+            (t4.budget_limit_amount + t4.purchase_limit_amt) as lm_credit_limit,
+            (coalesce(t4.account_balance,0)*(-1) + coalesce(t4.total_budget_balance_amt,0)) as lm_total_balance
+         from dw_fnd.fnd_wfs_crd_acc_mly t4
+         inner join my_dates t0 on date_trunc('month', t4.information_date) = t0.lm_date
+      )
+      , 
+      my_acc as
+      (
+         select 
+             cast(to_char(t1.information_date, 'yyyymm') as int) as year_month,
+            t3.customer_no,
+            t2.id_number,
+            t1.customer_key,
+            t1.account_number as cc_account_no,
+            case 
+               when substring(t1.account_number,1,6)  = '400154' then 'Silver'   
+               when substring(t1.account_number,1,6) = '410374' then 'Gold'      
+               when substring(t1.account_number,1,6) = '410375' then 'Black'     
+               else 'Unknown' 
+            end   as cc_colour,
+            t1.open_date as cc_date_opened,
+            t1.closed_date as cc_date_closed,
+            cast(to_char(t1.open_date, 'yyyymm') as int) as date_opened_ym,
+            cast(to_char(t1.closed_date, 'yyyymm') as int) as date_closed_ym,
+            trunc(months_between(t1.information_date,t1.open_date)) as cc_mob,
+            t1.card_account_status_code as cc_account_status,
+            t1.delinquent_cycles_count as cc_delinquency_cycle,
+            t1.status_date as cc_status_date,
+            cast(to_char(t1.status_date, 'yyyymm') as int) as status_date_ym,
+            t1.prev_card_account_status_code,
+            t1.transfer_to_legal_orig_date,
+            t4.lm_account_status,
+            t4.lm_credit_limit,
+            case when t1.card_account_status_code in('AAA','D1A','O1A') then 'Y' else 'N' end cc_shopable_ind,
+             (t1.account_balance*-1) + t1.total_budget_balance_amt as cc_current_balance,
+            (t1.budget_limit_amount + t1.purchase_limit_amt) as cc_credit_limit,
+            (t1.budget_limit_amount + t1.purchase_limit_amt)-((t1.account_balance*-1) + t1.total_budget_balance_amt) as cc_otb,
+            t2.secondary_card_indicator as cc_secondary_card_ind,
+   
+            row_number() over(
+               partition by 
+                     t1.information_date, 
+                     t2.id_number
+               order by 
+                     case 
+                        when t1.card_account_status_code in ('AAA') then 1
+                        when t1.card_account_status_code in (
+                           'AAA','D1A','D2A','D2D','D3D','D4D','D4P','D5D','D6D',
+                           'O1A','O2D','O3D','O4D','O5D','O6D','O7D','PLC'
+                              ) then 2
+                        when t5.card_account_status_code is not null then 3
+                        else 888 
+                     end,
+                     t1.open_date desc,
+                     t1.status_date desc, 
+                     t1.customer_key desc,
+                     case when substring(t1.account_number,1,1) = '4' then 1 else 2 end
+            ) as cust_row
+         from dw_fnd.fnd_wfs_crd_acc_mly t1
+         inner join my_dates t0 on t1.information_date = t0.month_end_dt
+         inner join my_id t2 on t1.customer_key = t2.customer_key 
+         left join my_cust t3 on t2.id_number = t3.identity_document_code
+         left join prevmonth_details t4 on t0.month_end_dt = t4.month_end_dt and t1.account_number = t4.account_number
+         left join (
+               select card_account_status_code 
+               from dw_aux.cust_profile_cc_status upcs 
+               where include_status = 'Y'
+         ) t5 on t1.card_account_status_code = t5.card_account_status_code
+      )
+      select t1.year_month,
+            t1.customer_no,
+            t1.id_number,
+            t1.customer_key,
+            cast(t1.cc_account_no as decimal(16)) as cc_account_no,
+            t1.cc_colour,
+            t1.cc_date_opened,
+            t1.cc_date_closed,
+            t1.cc_status_date,
+            t1.cc_mob,
+            t1.cc_account_status,
+            t1.cc_delinquency_cycle,
+            t1.cc_shopable_ind,
+            t1.cc_current_balance,
+            t1.cc_credit_limit,
+            t1.cc_otb,
+              t1.cc_secondary_card_ind,
+            t2.status_segment as cc_class,
+                
+            case when (t2.include_status = 'Y'           
+                    or ( 
+                     t2.include_status = 'N/Y'  
+                     and t2.status_group in ('CLOSED ACCOUNTS ACCOUNT STATUS')
+                     and t1.prev_card_account_status_code in (
+                              'AAA','D1A','D2A','D2D','D3D','D4D','D4P','D5D','D6D',
+                           'O1A','O2D','O3D','O4D','O5D','O6D','O7D','PLC' )
+                     and t1.transfer_to_legal_orig_date is null
+                     and (t1.date_closed_ym = t1.year_month or t1.cc_date_closed is null)
+                     and t1.status_date_ym = t1.year_month
+                     and t1.lm_credit_limit > 0)
+                  )
+               and substring(coalesce(t1.cc_account_no,'0'),1,1)='4'
+               and length(trim(replace(t1.id_number,'0',''))) > 0
+               and t1.customer_no is not null
+               and (t1.cc_credit_limit > 0 or t2.status_group in ('CLOSED ACCOUNTS ACCOUNT STATUS'))
+               and t1.cust_row = 1
+                     then 1 else 0 
+            end as cc_flag
+      from my_acc t1
+      left join dw_aux.cust_profile_cc_status t2 on t1.cc_account_status = t2.card_account_status_code
+      where cc_flag = 1
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (account_cc) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ SECONDARY CARD HOLDERS ------
+   ------------------------------------
+   
+   DROP table if exists sccc_sec_holders;
+   CREATE temporary TABLE sccc_sec_holders
+   (
+   id_number                        decimal(21,0),
+   sc_prim_holder_ind                  decimal(1,0),
+   cc_prim_holder_ind                  decimal(1,0),
+   sc_sec_holder_ind                decimal(1,0),
+   cc_sec_holder_ind                decimal(1,0),
+   sc_sec_holder_cnt                decimal(5,0),
+   cc_sec_holder_cnt                decimal(5,0),
+   
+   PRIMARY KEY(id_number)
+   )
+   DISTSTYLE KEY
+   DISTKEY(id_number)
+   SORTKEY(id_number)
+   ;
+      
+   insert into sccc_sec_holders (
+         id_number,
+         sc_prim_holder_ind,
+         cc_prim_holder_ind,
+         sc_sec_holder_ind,
+         cc_sec_holder_ind,
+         sc_sec_holder_cnt,
+         cc_sec_holder_cnt
+   )
+   with 
+      tmp_sc_emboss as 
+      (
+         select 
+            cast(a.wfs_account_no as varchar(16)) as wfs_account_no,
+            trim(b.identity_no) as id_number,
+            case when a.id_number = b.identity_no then 'P' else 'S' end as holder,
+            row_number() over(
+               partition by a.wfs_account_no, trim(b.identity_no)
+               order by sequence_no
+            ) as id_row
+         from (
+            select 
+               wfs_account_no,
+               id_number 
+            from tmp_account_scpl
+            where product = 'SC'
+         ) a
+         inner join dw_fnd.fnd_wfs_sc_emboss b on a.wfs_account_no = b.wfs_account_no        
+         where 
+            b.date_issued <= v_end_dt 
+            and b.block_code is null   /* filter out invalid cards */
+            and length(b.identity_no) = 13
+            and regexp_instr(b.identity_no, '^[[:digit:]]+$') = 1
+            and trim(b.identity_no) not like '0000%'
+      )
+      ,
+      sc_accounts as 
+      (
+         select 
+            wfs_account_no,
+            id_number,
+            holder,
+            id_row
+         from tmp_sc_emboss
+         where id_row = 1
+      )
+      ,
+      sc_sec_holders as
+      (
+         select 
+            wfs_account_no, 
+            max(case when holder = 'P' then id_number end) as primary_holder_id,
+            sum(case when holder = 'S' then 1 else 0 end) as sec_holders_cnt
+         from sc_accounts
+         group by wfs_account_no
+      )
+      
+      ,
+      tmp_crd_plstc_mly as  
+      (
+         select 
+            b.account_number,
+            b.tenant_id_number,  
+            row_number() over(
+               partition by 
+                     b.account_number, 
+                     b.tenant_id_number
+               order by 
+                     first_date_card_issued desc, 
+                     last_date_tenant_status_change desc
+            ) as id_row
+         from dw_fnd.fnd_wfs_crd_plstc_mly b
+         where 
+            b.information_date between v_start_dt and v_end_dt   /*TAKE LATEST MONTH*/
+            and substring(cast(b.account_number as varchar(16)), 1, 6) in ('410374','410375','400154')
+            and substring(cast(b.card_number as varchar(16)), 1, 6) in ('410374','410375','400154')
+            and (length(b.tenant_id_number) = 13 and b.tenant_id_number not like '0000%')
+            and b.tenant_status_code in ('AAA', 'D1A', 'D2D', 'D3D', 'D4D', 'D5D', 'D6D', 'O1A', 'O2D', 'O4D', 'O7D', 'PLC')
+      )
+      ,
+      cc_plastic as
+      (
+         select 
+            cast(b.account_number as varchar(16)) as account_number,
+            b.tenant_id_number as id_number,
+            case when a.id_number = b.tenant_id_number then 'P' else 'S' end as holder 
+         from tmp_account_cc a
+         inner join tmp_crd_plstc_mly b on a.cc_account_no = b.account_number 
+         where b.id_row = 1
+      )
+      ,
+      cc_sec_holders as 
+      (
+         select 
+            account_number, 
+            max(case when holder = 'P' then id_number end) as primary_holder_id,
+            sum(case when holder = 'S' then 1 else 0 end) as sec_holders_cnt
+         from cc_plastic
+         group by account_number
+      )
+      
+      select 
+         coalesce(t1.id_number,t2.id_number) as id_number,
+         max(case when t1.holder = 'P' then 1 else 0 end) as sc_prim_holder_ind,
+         max(case when t2.holder = 'P' then 1 else 0 end) as cc_prim_holder_ind,
+         max(case when t1.holder = 'S' then 1 else 0 end) as sc_sec_holder_ind,
+         max(case when t2.holder = 'S' then 1 else 0 end) as cc_sec_holder_ind,
+         sum(case when t1.holder = 'P' then coalesce(t3.sec_holders_cnt,0) else 0 end) as sc_sec_holder_cnt,
+         sum(case when t2.holder = 'P' then coalesce(t4.sec_holders_cnt,0) else 0 end) as cc_sec_holder_cnt
+      from sc_accounts t1
+      full join cc_plastic t2 on t1.id_number = t2.id_number
+      left join sc_sec_holders t3 on t1.wfs_account_no = t3.wfs_account_no and t1.id_number = t3.primary_holder_id
+      left join cc_sec_holders t4 on t2.account_number = t4.account_number and t2.id_number = t4.primary_holder_id
+      group by coalesce(t1.id_number,t2.id_number)
+      having 
+         sc_sec_holder_ind = 1 
+         or cc_sec_holder_ind = 1
+         or sc_sec_holder_cnt > 0 
+         or cc_sec_holder_cnt > 0 
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (sccc_sec_holders) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ LAST SPEND ------------------
+   ------------------------------------
+   
+   DROP table if exists customer_last_spend;
+   CREATE temporary TABLE customer_last_spend
+   (
+   customer_no                      decimal(21,0),
+   months_since_spend                  decimal(10,0),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+      
+   insert into customer_last_spend (
+         customer_no,
+         months_since_spend
+   )  
+   with 
+      cust_spend as
+      (
+         select 
+            t1.customer_no,
+            sum(t1.tender_selling) as total_spend,
+             date_trunc('month',max(t1.tran_date)) as lastest_month
+         from dw_fnd.cust_basket_tender t1
+         where 
+            t1.tran_date between v_sales_start_dt and v_end_dt
+            and t1.customer_no not in (0,99999999999999)
+            and t1.payment_account_no is null
+         group by t1.customer_no
+      )
+      select 
+         t1.customer_no,
+         months_between(v_start_dt, lastest_month) as months_since_spend
+      from cust_spend t1
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (customer_last_spend) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ LOCATION --------------------
+   ------------------------------------
+   
+   DROP table if exists customer_location;
+   CREATE temporary TABLE customer_location
+   (
+   customer_no                      decimal(21,0),
+   province                      varchar(50),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+      
+   insert into customer_location (
+         customer_no,
+         province
+   )  
+   with 
+      cust_loc_spend as
+      (
+         select 
+            t1.customer_no,
+            t1.location_no,
+            count(distinct t1.location_no::varchar||'_'||t1.till_no::varchar||'_'||t1.tran_no::varchar||'_'||t1.tran_date::varchar
+               ) as count_store,
+            sum(t1.tender_selling) as total_spend,
+            cast(to_char(max(t1.tran_date), 'yyyymm') as int) as max_year_month
+         from dw_fnd.cust_basket_tender t1
+         where 
+            t1.tran_date between v_loc_start_dt and v_end_dt
+            and t1.customer_no not in (0,99999999999999)
+            and t1.customer_no is not null
+            and t1.payment_account_no is null
+         group by 
+            t1.customer_no,
+            t1.location_no
+      )
+      ,
+      location_order as
+      (
+         select 
+            t1.customer_no,
+            t1.location_no,
+            row_number() over (
+               partition by t1.customer_no 
+               order by 
+                  t1.max_year_month desc,
+                  t1.count_store desc, 
+                  t1.total_spend desc
+            ) as store_rank
+         FROM cust_loc_spend t1
+         where t1.location_no <> 3501  /* Remove 'ON THE DOT-ONLINE FF' store */
+      )
+      select 
+         t1.customer_no,
+         case 
+            when t2.province_state_code = 'EC' then 'Eastern Cape'   
+            when t2.province_state_code = 'FS' then 'Free State'     
+            when t2.province_state_code = 'GT' then 'Gauteng'     
+            when t2.province_state_code = 'KN' then 'KwaZulu-Natal'     
+            when t2.province_state_code = 'MP' then 'Mpumalanga'     
+            when t2.province_state_code = 'NC' then 'Northern Cape'     
+            when t2.province_state_code = 'NP' then 'Limpopo'     
+            when t2.province_state_code = 'NW' then 'North West'     
+            when t2.province_state_code = 'WP' then 'Western Cape'
+         end as province
+      from location_order t1
+      left join dw_fnd.dim_location t2 on t1.location_no = t2.location_no
+      where store_rank = 1
+         and province is not null 
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (customer_location) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ BUREAU DATA -----------------
+   ------------------------------------
+   
+   DROP table if exists transunion_segment;
+   CREATE temporary TABLE transunion_segment
+   (
+   id_number                        varchar(15),
+   gender                        varchar(10),
+   predictedincome                  decimal(30,2),
+   active_accounts                  decimal(30,0),
+   retail_accounts                  decimal(30,0),
+   cc_accounts                      decimal(30,0),
+   pl_bank                          decimal(30,0),
+   pl_non_bank                      decimal(30,0),
+   pl_accounts                      decimal(30,0),
+   micro_bank                       decimal(30,0),
+   micro_non_bank                   decimal(30,0),
+   microloan_accounts               decimal(30,0),
+   homeloan_accounts                   decimal(30,0),
+   age                           decimal(5,0),
+   marriageindicator                   varchar(50),
+   totaldebt                        decimal(30,2),
+   retailbalance                       decimal(30,2),
+   creditcardbalance                   decimal(30,2),
+   pl_bank_balance                  decimal(30,2),
+   pl_non_bank_balance                 decimal(30,2),
+   personalloanbalance                 decimal(30,2),
+   ml_bank_balance                  decimal(30,2),
+   ml_non_bank_balance                 decimal(30,2),
+   microloanbalance                    decimal(30,2),
+   homeloanbalance                  decimal(30,2),
+   vehiclebalanceabf                   decimal(30,0),
+   permanent_work                   decimal(5,0),
+   deceasedindyn                       varchar(15),
+   
+   PRIMARY KEY(id_number)
+   )
+   DISTSTYLE KEY
+   DISTKEY(id_number)
+   SORTKEY(id_number)
+   ;
+   
+   insert into transunion_segment (
+         id_number,
+         gender,
+         predictedincome,
+         active_accounts,
+         retail_accounts,
+         cc_accounts,
+         pl_bank,
+         pl_non_bank,
+         pl_accounts,
+         micro_bank,
+         micro_non_bank,
+         microloan_accounts,
+         homeloan_accounts,
+         totaldebt,
+         retailbalance,
+         creditcardbalance,
+         pl_bank_balance,
+         pl_non_bank_balance,
+         personalloanbalance,
+         ml_bank_balance,
+         ml_non_bank_balance,
+         microloanbalance,
+         homeloanbalance,
+         vehiclebalanceabf,
+         permanent_work,
+         deceasedindyn
+   )
+   with 
+    cust_base as
+    (
+      select 
+         fa.consumer_no,
+         fa.filler_code,
+         fa.reporting_month,
+         fa.data_dt,
+         fa.client_ref_no_1,
+         fa.surname,
+         fa.forename_1,
+         fa.dob,
+         fa.rsa_id
+            
+         ,row_number() over(
+            partition by fa.rsa_id
+            order by fa.primary_sort_key desc
+         ) as id_row
+      from dw_fnd_tu.fnd_ach fa
+      where fa.reporting_month = v_mth_to_do
+         and fa.rsa_id not in ('0')
+   
+   )
+      select
+         fa.rsa_id as id_number,
+         fc1.dm0002al as gender,
+         fcs.scr1_amount as predictedincome,
+         fc2.pp0002al as active_accounts,
+         fc2.pp0002cl as retail_accounts,
+         fc2.pp0002cc as cc_accounts,
+         case when fc2.pp0002lb =-2 then 0 else fc2.pp0002lb end as pl_bank,
+         case when fc2.pp0002ln =-2 then 0 else fc2.pp0002ln end as pl_non_bank,
+         pl_bank + pl_non_bank as pl_accounts,
+         case when fc2.pp0002lo =-2 then 0 else fc2.pp0002lo end as micro_bank,
+         case when fc2.pp0002fo =-2 then 0 else fc2.pp0002fo end as micro_non_bank,  
+         micro_bank + micro_non_bank as microloan_accounts,/*as microloan_accounts, cpc_ml_total_actac */
+         fc2.pp0002mb as homeloan_accounts,  /* cpc_hl_total_actac */
+         fc15.pp0501al as totaldebt,
+         fc17.pp0601cl as retailbalance,
+         fc17.pp0601cc as creditcardbalance,
+         case when fc18.pp0601lb=-2 then 0 else fc18.pp0601lb end as pl_bank_balance,
+         case when fc18.pp0601ln=-2 then 0 else fc18.pp0601ln end as pl_non_bank_balance,
+         pl_bank_balance +  pl_non_bank_balance as personalloanbalance,
+         case when fc18.pp0601lo=-2 then 0 else fc18.pp0601lo end as ml_bank_balance,
+         case when fc18.pp0601fo=-2 then 0 else fc18.pp0601fo end as ml_non_bank_balance, 
+         ml_bank_balance + ml_non_bank_balance as microloanbalance,
+         fc18.pp0601mb as homeloanbalance,  
+         fc18.pp0601vf as vehiclebalanceabf, 
+         case when (HomeLoanBalance + VehicleBalanceABF) > 0 then 1 else 0 end as Permanent_Work,
+         fc1.dm0011al as deceasedindyn
+      from cust_base fa
+      left join dw_fnd_tu.fnd_cc7_01 fc1 on fa.data_dt =fc1.data_dt and fa.filler_code = fc1.filler_code 
+      left join dw_fnd_tu.fnd_cc7_02 fc2 on fa.data_dt =fc2.data_dt and fa.filler_code = fc2.filler_code
+      left join dw_fnd_tu.fnd_cc7_15 fc15 on fa.data_dt =fc15.data_dt and fa.filler_code = fc15.filler_code
+      left join dw_fnd_tu.fnd_cc7_17 fc17 on fa.data_dt =fc17.data_dt and fa.filler_code = fc17.filler_code
+      left join dw_fnd_tu.fnd_cc7_18 fc18 on fa.data_dt =fc18.data_dt and fa.filler_code = fc18.filler_code
+      left join dw_fnd_tu.fnd_scr fcs on fa.data_dt = fcs.data_dt and fa.filler_code = fcs.filler_code 
+      where id_row = 1
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (transunion_segment) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ ONEAPP BASE -----------------
+   ------------------------------------
+
+   DROP table if exists oneapp_base;
+   CREATE temporary TABLE oneapp_base
+   (
+   customer_no                      decimal(21,0),
+   status                           varchar(20),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+      
+   insert into oneapp_base (
+         customer_no,
+         status
+   )  
+   with 
+      dig_cust as
+      (
+      select
+         t3.customer_no,
+         upper(substring(t2.status_desc,1,1)) as status,
+         row_number() over(
+            partition by t3.customer_no
+            order by 
+                  case 
+                     when t2.status_desc = 'ACTIVE' then 1
+                     when t2.status_desc = 'PRE-DORMANT' then 2
+                     when t2.status_desc = 'DORMANT' then 3
+                     else 999 
+                  end,
+                  t2.status_desc,
+                  t2.last_subscr_login_date desc
+         ) as cust_row
+      from dw_fnd.wfs_oneapp_subscr_status_hist t2
+      left join dw_fnd.dim_oneapp_subscriber t3
+         on t2.oneapp_subscriber_key = t3.oneapp_subscriber_key
+      where v_start_dt between date_trunc('month', t2.record_active_from_date)
+                          and last_day(t2.record_active_to_date)
+         and t3.customer_no is not null
+      ) 
+      select 
+          t1.customer_no,
+         t1.status
+      from dig_cust t1
+      where t1.cust_row = 1
+   
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (oneapp_base) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ LOYALTY TIER ----------------
+   ------------------------------------
+
+   DROP table if exists loyalty_tier_ref;
+   CREATE temporary TABLE loyalty_tier_ref
+   (
+   customer_no                      decimal(21,0),
+   loyalty_tier                     varchar(30),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+      
+   insert into loyalty_tier_ref (
+         customer_no,
+         loyalty_tier
+   )        
+      select
+         customer_no, 
+         loyalty_tier
+      from dw_aux.cust_profile_loyalty_tier
+      where v_mth_to_do between year_month_st and year_month_en
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (loyalty_tier_ref) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ FILTER CUSTOMERS ------------
+   ------------------------------------
+
+   DROP TABLE if exists customer_list_all;
+   CREATE temporary TABLE customer_list_all
+      DISTSTYLE KEY
+      DISTKEY(id_number)
+   as
+   with  
+      my_cust_spend as 
+      (
+         select
+            mc.customer_no, 
+            mc.identity_document_code as id_number,
+            cl.months_since_spend,
+            case when coalesce(cl.months_since_spend,999) <= 23 then 1 else 0 end as has_spend_ind,
+            
+            ROW_NUMBER() OVER(
+               PARTITION by mc.identity_document_code
+               ORDER BY coalesce(cl.months_since_spend,999), mc.CUSTOMER_NO desc
+            ) AS ID_ROW
+         FROM dw_fnd.dim_customer mc
+         left join customer_last_spend cl on mc.CUSTOMER_NO = cl.CUSTOMER_NO
+         WHERE mc.CUSTOMER_NO <> 0
+            and mc.c2_create_date <= v_end_dt
+      )
+      select 
+            cs.customer_no, 
+            cs.id_number,
+            cs.months_since_spend,
+            cs.has_spend_ind,
+            case when cs.id_number is null then 1 else cs.ID_ROW end as ID_ROW
+      from my_cust_spend cs
+   ;
+   commit;
+   
+   
+   DROP table if exists customer_list_filter;
+   CREATE temporary TABLE customer_list_filter
+   (
+   customer_no                      decimal(21,0),
+   months_since_spend                  decimal(10,0),
+   id_row                           decimal(5,0),
+   
+   PRIMARY KEY(customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(customer_no)
+   SORTKEY(customer_no)
+   ;
+      
+   insert into customer_list_filter (
+         customer_no,
+         months_since_spend,
+         id_row
+   )  
+      select t1.customer_no,
+            min(t1.months_since_spend) as months_since_spend,
+            min(t1.id_row) as id_row
+      from customer_list_all t1
+      left join (select id_number, scpl_flag from tmp_account_scpl where product = 'SC') sc on t1.id_number = sc.id_number
+      left join (select id_number, scpl_flag from tmp_account_scpl where product = 'PL') pl on t1.id_number = pl.id_number
+      left join tmp_account_cc cc on t1.id_number = cc.id_number
+      left join tmp_cust_portfolio t3 on t1.customer_no = t3.customer_no
+      where
+         ((cc.cc_flag = 1
+          or sc.scpl_flag = 1
+          or pl.scpl_flag = 1 )
+         and (t1.id_row = 1 
+            or (t1.id_row > 1 and t1.has_spend_ind = 1)) 
+         )
+         or (t3.ww_flag = 1 and t1.has_spend_ind = 1)
+      group by t1.customer_no
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (customer_list_filter) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ CUSTOMER DETAILS ------------
+   ------------------------------------
+
+   DROP TABLE if exists pre_customer_details;
+   CREATE temporary TABLE pre_customer_details 
+      DISTSTYLE KEY
+      DISTKEY(customer_no)
+   as
+   with
+      my_cust as
+      (
+         select 
+            t2.customer_no,
+            trim(t2.identity_document_code) as identity_document_code,
+            case when t2.c2_create_date > t2.birth_date then t2.birth_date end as birth_date,
+            t2.wfs_customer_no as vision_customer_no,
+            t2.subscriber_key as subscriber_key,
+            t2.customer_status,       
+            t2.gender_code,
+            t2.marital_status,
+            t2.num_minor,
+            t2.preferred_language,
+            t2.physical_province_name,
+            t2.race,
+            t2.age_acc_holder,
+            t2.source_of_income_desc,
+            t2.employment_status_desc,
+            t4.derived_race,
+            t2.title_code,
+            case when upper(t2.title_code) = 'MNR.' then 'MR'
+                when upper(t2.title_code) = 'ME' then 'MS'
+                when upper(t2.title_code) = 'MEJ.' then 'MISS'
+                when upper(t2.title_code) = 'MEV.' then 'MRS'
+                when upper(t2.title_code) = 'REV.' then 'REV'
+                when upper(t2.title_code) = 'MRS.' then 'MRS'
+                when upper(t2.title_code) = 'MR.' then 'MR'
+                when upper(t2.title_code) = 'DR.' then 'DR'
+                when upper(t2.title_code) = 'MS.' then 'MS'
+                when upper(t2.title_code) = 'MNR' then 'MR'
+                when upper(t2.title_code) = 'MEJ' then 'MISS'
+                when upper(t2.title_code) = 'MEV' then 'MRS'
+                when upper(t2.title_code) = 'REV' then 'REV'
+                when upper(t2.title_code) = 'MRS' then 'MRS'
+                when upper(t2.title_code) = 'MR' then 'MR'
+                when upper(t2.title_code) = 'DR' then 'DR'
+                when upper(t2.title_code) = 'KAPT' then 'CAPT'
+                when upper(t2.title_code) = 'KOL' then 'COL'
+                when upper(t2.title_code) = 'KORP' then 'CORP'
+                else upper(t2.title_code) end as title,
+            t2.first_middle_name_initial as initials, 
+            t2.first_name,
+            t2.last_name,
+            replace(t2.home_cell_area_code || t2.home_cell_no,' ','') as home_cell_no,
+            replace(t2.work_cell_area_code || t2.work_cell_no,' ','') as work_cell_no,
+            case 
+               when upper(t2.home_email_address) like '%NOEMAIL%' 
+                  or upper(t2.home_email_address) like '%NOMAIL%'  
+                  or upper(t2.home_email_address) like 'NONE@%'  
+                  or upper(t2.home_email_address) like 'NOREPLY@%' then null 
+               else t2.home_email_address 
+            end as home_email_address,
+            case 
+               when upper(t2.work_email_address) like '%NOEMAIL%' 
+                  or upper(t2.work_email_address) like '%NOMAIL%'  
+                  or upper(t2.work_email_address) like 'NONE@%'  
+                  or upper(t2.work_email_address) like 'NOREPLY@%' then null 
+               else t2.work_email_address 
+            end as work_email_address,
+            case 
+               when upper(t2.estatement_email) like '%NOEMAIL%' 
+                  or upper(t2.estatement_email) like '%NOMAIL%'  
+                  or upper(t2.estatement_email) like 'NONE@%'  
+                  or upper(t2.estatement_email) like 'NOREPLY@%' then null 
+               else t2.estatement_email 
+            end as estatement_email,
+            t3.months_since_spend,
+            t3.id_row
+         from dw_fnd.dim_customer t2
+         inner join customer_list_filter t3 on t2.customer_no = t3.customer_no
+         left join dw_prf.vw_dim_customer_race t4 on t2.customer_no = t4.customer_no
+      ) 
+      select
+         t2.customer_no,
+         t2.identity_document_code,
+         case 
+            when regexp_instr(t2.identity_document_code, '^[[:digit:]]+$') = 1
+               and length(t2.identity_document_code) = 13
+               and substring(t2.identity_document_code,1,4) <> '0000'
+                  then 1 else 0 end as id_valid_ind,
+          t2.birth_date,
+         t2.vision_customer_no,
+         t2.subscriber_key,
+         t2.customer_status,     
+         t2.gender_code,
+         t2.marital_status,
+         t2.num_minor,
+         t2.preferred_language,
+         t2.physical_province_name,
+         t2.race,
+         t2.age_acc_holder,
+         t2.source_of_income_desc,
+         t2.employment_status_desc,
+         t2.derived_race,
+         t2.title_code,
+         t2.title,
+         t2.initials,
+         t2.first_name,
+         t2.last_name,
+         regexp_replace(replace(initcap(coalesce(t2.title,'')),' ','')||' '||upper(substring(coalesce(t2.initials,''),1,1))||' '||initcap(coalesce(t2.last_name,'')), '\\s+', ' ') as title_initial_surname,
+         case 
+            when t2.home_cell_no is not null 
+               and substring(t2.home_cell_no,1,2) not in ('00','01','02','03','04','05') 
+               and length(t2.home_cell_no) = 10
+                  then t2.home_cell_no
+            when t2.work_cell_no is not null 
+               and substring(t2.work_cell_no,1,2) not in ('00','01','02','03','04','05') 
+               and length(t2.work_cell_no) = 10
+                  then t2.work_cell_no
+         end as cell_no,
+         case 
+            when t2.estatement_email is not null then t2.estatement_email
+            when t2.home_email_address is not null then t2.home_email_address
+            when t2.work_email_address is not null then t2.work_email_address
+         end as email_address,
+         t2.months_since_spend,
+         t2.id_row
+      from my_cust t2
+   ;
+   commit;
+   
+   
+   DROP table if exists c2_customer_details;
+   CREATE temporary TABLE c2_customer_details
+   (
+   c2_customer_no                      decimal(21,0),
+   id_number                        varchar(15),
+   dob                           date,
+   id_valid_ind                     decimal(1,0),
+   vision_customer_no                  decimal(30),
+   subscriber_key                   varchar(30),
+   customer_status                  varchar(20),
+   title_code                       varchar(20),
+   title                            varchar(20),
+   initials                         varchar(10),
+   first_name                       varchar(100),
+   last_name                        varchar(100),
+   title_initial_surname               varchar(255),
+   gender                           varchar(10),
+   birth_year                       decimal(4,0),
+   age                           decimal(5,0),
+   generation                       varchar(50),
+   age_group                        varchar(20),
+   race                          varchar(20),
+   marital_status                      varchar(50),
+   physical_province_name              varchar(50),
+   source_of_income_desc               varchar(50),
+   cell_no                       varchar(20),
+   emailaddress                     varchar(255),
+   months_since_spend                  decimal(10,0),
+   id_row                           decimal(5,0),
+   
+   PRIMARY KEY(c2_customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(id_number)
+   SORTKEY(id_number)
+   ;
+   
+   insert into c2_customer_details (
+         c2_customer_no, 
+         id_number, 
+         dob, 
+         id_valid_ind, 
+         vision_customer_no, 
+         subscriber_key,
+         customer_status, 
+         title_code, 
+         title, 
+         initials, 
+         first_name, 
+         last_name, 
+         title_initial_surname, 
+         gender, 
+         birth_year, 
+         age, 
+         generation, 
+         age_group, 
+         race, 
+         marital_status, 
+         physical_province_name, 
+         source_of_income_desc, 
+         cell_no, 
+         emailaddress, 
+         months_since_spend, 
+         id_row
+   )
+      select 
+         t1.customer_no as c2_customer_no,
+         t1.identity_document_code as id_number,
+         case 
+            when t1.id_valid_ind = 0 then t1.birth_date
+            when substring(t1.identity_document_code,1,1) = '0' then to_date('20'||substring(t1.identity_document_code,1,6),'yyyymmdd')
+            when t1.identity_document_code is not null then to_date('19'||substring(t1.identity_document_code,1,6),'yyyymmdd') 
+            else t1.birth_date 
+         end as dob,
+         t1.id_valid_ind,
+         t1.vision_customer_no,
+         t1.subscriber_key,
+         t1.customer_status,  
+         t1.title_code,
+         t1.title,
+         t1.initials,
+         t1.first_name,
+         t1.last_name,
+         t1.title_initial_surname,
+         case 
+            when id_valid_ind = 0 then t1.gender_code
+            when coalesce(cast(substring(t1.identity_document_code,7,4) as integer),-1) between 0000 and 4999 then 'F'
+            when coalesce(cast(substring(t1.identity_document_code,7,4) as integer),-1) between 5000 and 9999 then 'M'
+         end as gender,
+         extract(year from dob) as birth_year,
+         case 
+            when dateadd(year, datediff(year, dob, v_end_dt), dob) > v_end_dt
+            then datediff(year, dob, v_end_dt) - 1
+            else datediff(year, dob, v_end_dt)
+         end as age,
+         case
+            when birth_year between 1901 and 1927 then 'Greatest Generation'
+            when birth_year between 1928 and 1945 then 'Silent Generation'
+            when birth_year between 1946 and 1964 then 'Baby Boomers'
+            when birth_year between 1965 and 1980 then 'Generation X'
+            when birth_year between 1981 and 1995 then 'Millennials'
+            when birth_year between 1996 and 2010 then 'Generation Z'
+            when birth_year between 2011 and 2025 then 'Generation Alpha'
+            when birth_year < 1901 then 'Before'
+            when birth_year > 2025 then 'After'
+         end as generation,
+         case 
+            when age < 18 then '<18 years'
+            when age between 18 and 24 then '18-24 years'
+            when age between 25 and 35 then '25-35 years'
+            when age between 36 and 50 then '36-50 years'
+            when age > 50 then '>50 years'
+         end as age_group,
+         case when coalesce(t1.derived_race,'Race Unknown') not in ('Race Unknown') then t1.derived_race end as race,
+         t1.marital_status,
+         case when t2.province is not null then upper(t2.province) else t1.physical_province_name end as physical_province_name,
+         t1.source_of_income_desc,
+         t1.cell_no,
+         t1.email_address as emailaddress,
+         t1.months_since_spend,
+         t1.id_row
+      from pre_customer_details t1
+      left join customer_location t2 on t1.customer_no = t2.customer_no
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (c2_customer_details) : %', now_fmt, row_cnt;
+   
+
+   ------------------------------------
+   ------ PROFILING TABLE -------------
+   ------------------------------------
+
+   DROP table if exists customer_profiles_valid;
+   CREATE temporary TABLE customer_profiles_valid
+   (
+   year_month                       decimal(6,0),
+   c2_customer_no                      decimal(21,0),
+   wfs_product_ind                  varchar(20),
+   customer_group                   varchar(20),
+   sc_flag                          decimal(1,0),
+   cc_flag                          decimal(1,0),
+   pl_flag                          decimal(1,0),
+   id_number                        varchar(15),
+   subscriber_key                   varchar(30),
+   gender                        varchar(10),
+   age                           decimal(5,0),
+   age_group                        varchar(20),
+   generation                       varchar(50),
+   birth_date                       date,
+   race                             varchar(20),
+   province                         varchar(50),
+   marital_status                   varchar(50),
+   source_of_income_desc               varchar(50),
+   title                            varchar(20),
+   first_name                       varchar(100),
+   last_name                        varchar(100),
+   title_initial_surname               varchar(255),
+   cell_no                          varchar(20),
+   emailaddress                     varchar(255),
+   loyalty_tiers                       varchar(30),
+   months_since_spend               decimal(10,0),
+   app_ind                          varchar(20),
+   sc_account_no                       decimal(30,0),
+   sc_account_status                   varchar(5),
+   sc_delinquency_cycle                varchar(5),
+   sc_credit_limit                  decimal(30,2),
+   sc_current_balance               decimal(30,2),
+   sc_otb                        decimal(30,2),
+   sc_date_opened                   date,
+   sc_date_closed                   date,
+   sc_date_chgoff                   date,
+   sc_date_last_statement              date,
+   sc_mob                        decimal(10,0),
+   sc_shopable_ind                  varchar(1),
+   sc_block_code1                   varchar(1),
+   sc_block_code2                   varchar(1),
+   sc_bureau_score                  decimal(10,0),
+   sc_behaviour_score01                decimal(10,0),
+   sc_class                         varchar(50),
+   sc_sec_holder_cnt                   decimal(5,0),
+   customer_key                     varchar(20),
+   cc_account_no                       decimal(30,0),
+   cc_colour                        varchar(10),
+   cc_account_status                   varchar(5),
+   cc_shopable_ind                  varchar(1),
+   cc_date_opened                   date,
+   cc_date_closed                   date,
+   cc_mob                        decimal(10,0),
+   cc_current_balance               decimal(30,2),
+   cc_credit_limit                  decimal(30,2),
+   cc_otb                        decimal(30,2),
+   cc_secondary_card_ind               varchar(1),
+   cc_class                         varchar(50),
+   cc_sec_holder_cnt                   decimal(5,0),
+   pl_account_no                       decimal(30,0),
+   pl_account_status                   varchar(5),
+   pl_delinquency_cycle                varchar(5),
+   pl_credit_limit                  decimal(30,2),
+   pl_current_balance               decimal(30,2),
+   pl_otb                        decimal(30,2),
+   pl_date_opened                   date,
+   pl_date_closed                   date,
+   pl_date_chgoff                   date,
+   pl_date_last_statement              date,
+   pl_mob                        decimal(10,0),
+   pl_shopable_ind                  varchar(1),
+   pl_block_code1                   varchar(1),
+   pl_block_code2                   varchar(1),
+   pl_bureau_score                  decimal(10,0),
+   pl_behaviour_score01                decimal(10,0),
+   pl_class                         varchar(50),
+   littleworld_flag                    decimal(1,0),
+   myschool_flag                       decimal(1,0),
+   wwdifference_flag                   decimal(1,0),
+   wodifference_flag                   decimal(1,0),
+   discovery_flag                   decimal(1,0),
+   sc_secholder_flag                   decimal(1,0),
+   cc_secholder_flag                   decimal(1,0),
+   predictedincome                  decimal(30,2),
+   active_accounts                  decimal(30,0),
+   retail_accounts                  decimal(30,0),
+   cc_accounts                      decimal(30,0),
+   pl_accounts                      decimal(30,0),
+   microloan_accounts               decimal(30,0),
+   homeloan_accounts                   decimal(30,0),
+   permanent_work                   decimal(5,0),
+   totaldebt                        decimal(30,2),
+   retailbalance                       decimal(30,2),
+   creditcardbalance                   decimal(30,2),
+   personalloanbalance                 decimal(30,2),
+   microloanbalance                    decimal(30,2),
+   homeloanbalance                  decimal(30,2),
+   vehiclebalanceabf                   decimal(30,0),
+   deceasedindyn                       varchar(15),
+   id_rank                          decimal(5,0),
+   
+   PRIMARY KEY(c2_customer_no)
+   )
+   DISTSTYLE KEY
+   DISTKEY(c2_customer_no)
+   SORTKEY(year_month, c2_customer_no)
+   ;
+   
+   insert into customer_profiles_valid (
+         year_month,
+         c2_customer_no,
+         wfs_product_ind,
+         customer_group,
+         sc_flag,
+         cc_flag,
+         pl_flag,
+         id_number,
+         subscriber_key,
+         gender,
+         age,
+         age_group,
+         generation,
+         birth_date,
+         race,
+         province,
+         marital_status,
+         source_of_income_desc,
+         title,
+         first_name,
+         last_name,
+         title_initial_surname,
+         cell_no,
+         emailaddress,
+         loyalty_tiers,
+         months_since_spend,
+         app_ind,
+         sc_account_no,
+         sc_account_status,
+         sc_delinquency_cycle,
+         sc_credit_limit,
+         sc_current_balance,
+         sc_otb,
+         sc_date_opened,
+         sc_date_closed,
+         sc_date_chgoff,
+         sc_date_last_statement,
+         sc_mob,
+         sc_shopable_ind,
+         sc_block_code1,
+         sc_block_code2,
+         sc_bureau_score,
+         sc_behaviour_score01,
+         sc_class,
+         sc_sec_holder_cnt,
+         customer_key,
+         cc_account_no,
+         cc_colour,
+         cc_account_status,
+         cc_shopable_ind,
+         cc_date_opened,
+         cc_date_closed,
+         cc_mob,
+         cc_current_balance,
+         cc_credit_limit,
+         cc_otb,
+         cc_secondary_card_ind,
+         cc_class,
+         cc_sec_holder_cnt,
+         pl_account_no,
+         pl_account_status,
+         pl_delinquency_cycle,
+         pl_credit_limit,
+         pl_current_balance,
+         pl_otb,
+         pl_date_opened,
+         pl_date_closed,
+         pl_date_chgoff,
+         pl_date_last_statement,
+         pl_mob,
+         pl_shopable_ind,
+         pl_block_code1,
+         pl_block_code2,
+         pl_bureau_score,
+         pl_behaviour_score01,
+         pl_class,
+         littleworld_flag,
+         myschool_flag,
+         wwdifference_flag,
+         wodifference_flag,
+         discovery_flag,
+         sc_secholder_flag,
+         cc_secholder_flag,
+         predictedincome,
+         active_accounts,
+         retail_accounts,
+         cc_accounts,
+         pl_accounts,
+         microloan_accounts,
+         homeloan_accounts,
+         permanent_work,
+         totaldebt,
+         retailbalance,
+         creditcardbalance,
+         personalloanbalance,
+         microloanbalance,
+         homeloanbalance,
+         vehiclebalanceabf,
+         deceasedindyn,
+         id_rank
+   )
+      select 
+         v_mth_to_do as year_month,
+         t1.c2_customer_no, 
+         case 
+            when sc.scpl_flag = 1 and cc.cc_flag = 1 then 'SC & CC'
+            when sc.scpl_flag = 1 then 'SC'
+            when cc.cc_flag = 1 then 'CC'
+            when pl.scpl_flag = 1 then 'PL'
+            else 'WW Client' 
+         end as wfs_product_ind,
+         case when wfs_product_ind not in ('WW Client') then 'WFS' else 'WW' end as customer_group,
+         sc.scpl_flag as sc_flag,
+         cc.cc_flag, 
+         pl.scpl_flag as pl_flag,
+         t1.id_number,
+         t1.subscriber_key,
+         case 
+            when t7.gender in ('M','F') 
+               and t1.gender is null then t7.gender
+            else t1.gender 
+         end as gender,
+         t1.age, 
+         t1.age_group,
+         t1.generation,
+         t1.dob as birth_date,
+         t1.race,
+         t1.physical_province_name as province,
+         t1.marital_status, 
+         t1.source_of_income_desc, 
+         t1.title,
+         t1.first_name,
+         t1.last_name,
+         t1.title_initial_surname,
+         t1.cell_no,
+         t1.emailaddress,
+         
+         t4.loyalty_tier as loyalty_tiers,
+         t1.months_since_spend,
+         t5.status as app_ind,
+         
+         sc.wfs_account_no as sc_account_no, 
+         sc.account_status as sc_account_status, 
+         sc.delinquency_cycle as sc_delinquency_cycle, 
+         sc.credit_limit as sc_credit_limit, 
+         sc.current_balance as sc_current_balance, 
+         sc.open_to_buy as sc_otb, 
+         sc.date_opened as sc_date_opened, 
+         sc.date_closed as sc_date_closed, 
+         sc.date_chgoff as sc_date_chgoff, 
+         sc.date_last_stmt as sc_date_last_statement,
+         sc.mob as sc_mob,  
+         sc.shopable_ind as sc_shopable_ind, 
+         sc.block_code1 as sc_block_code1,
+         sc.block_code2 as sc_block_code2, 
+         sc.bureau_score as sc_bureau_score, 
+         sc.behaviour_score01 as sc_behaviour_score01,
+         sc.scpl_class as sc_class, 
+         case when t2.sc_sec_holder_cnt > 0 then t2.sc_sec_holder_cnt end as sc_sec_holder_cnt,
+         
+         cc.customer_key, 
+         cc.cc_account_no, 
+         cc.cc_colour, 
+         cc.cc_account_status, 
+         cc.cc_shopable_ind, 
+         cc.cc_date_opened, 
+         cc.cc_date_closed, 
+         cc.cc_mob, 
+         cc.cc_current_balance, 
+         cc.cc_credit_limit, 
+         cc.cc_otb, 
+         cc.cc_secondary_card_ind,
+         cc.cc_class,
+         case when t2.cc_sec_holder_cnt > 0 then t2.cc_sec_holder_cnt end as cc_sec_holder_cnt,
+         
+         pl.wfs_account_no as pl_account_no, 
+         pl.account_status as pl_account_status, 
+         pl.delinquency_cycle as pl_delinquency_cycle, 
+         pl.credit_limit as pl_credit_limit, 
+         pl.current_balance as pl_current_balance, 
+         pl.open_to_buy as pl_otb, 
+         pl.date_opened as pl_date_opened, 
+         pl.date_closed as pl_date_closed, 
+         pl.date_chgoff as pl_date_chgoff, 
+         pl.date_last_stmt as pl_date_last_statement,  
+         pl.mob as pl_mob, 
+         pl.shopable_ind as pl_shopable_ind,
+         pl.block_code1 as pl_block_code1,
+         pl.block_code2 as pl_block_code2,
+         pl.bureau_score as pl_bureau_score, 
+         pl.behaviour_score01 as pl_behaviour_score01,
+         pl.scpl_class as pl_class, 
+         
+         t3.littleworld_flag as littleworld_flag, 
+         t3.myschool_flag as myschool_flag, 
+         t3.wwdifference_flag as wwdifference_flag, 
+         t3.wodifference_flag as wodifference_flag, 
+         t3.discovery_flag as discovery_flag,
+         case when t2.sc_sec_holder_ind = 1 then t2.sc_sec_holder_ind end as sc_secholder_flag,
+         case when t2.cc_sec_holder_ind = 1 then t2.cc_sec_holder_ind end as cc_secholder_flag,
+         
+         t7.predictedincome, 
+         t7.active_accounts, 
+         t7.retail_accounts, 
+         t7.cc_accounts, 
+         t7.pl_accounts, 
+         t7.microloan_accounts, 
+         t7.homeloan_accounts,
+         t7.permanent_work,
+         t7.totaldebt, 
+         t7.retailbalance, 
+         t7.creditcardbalance, 
+         t7.personalloanbalance, 
+         t7.microloanbalance, 
+         t7.homeloanbalance, 
+         t7.vehiclebalanceabf, 
+         t7.deceasedindyn,
+         
+         t1.id_row as id_rank
+      from c2_customer_details t1
+      left join (select * from tmp_account_scpl where product = 'SC') sc on t1.id_number = sc.id_number
+      left join (select * from tmp_account_scpl where product = 'PL') pl on t1.id_number = pl.id_number
+      left join tmp_account_cc cc on t1.id_number = cc.id_number
+      left join sccc_sec_holders t2 on t1.id_number = t2.id_number
+      left join tmp_cust_portfolio t3 on t1.c2_customer_no = t3.customer_no
+      left join loyalty_tier_ref t4 on t1.c2_customer_no = t4.customer_no
+      left join oneapp_base t5 on t1.c2_customer_no = t5.customer_no
+      left join transunion_segment t7 on t1.id_number = t7.id_number
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS row_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (customer_profiles_valid) : %', now_fmt, row_cnt;
+   
+
+   UPDATE dw_prf.customer_profile_mly tgt
+   SET 
+   -- ,rowid = src.rowid
+   -- ,record_created_date = src.record_created_date
+      last_updated_date = current_date
+   -- ,year_month = src.year_month
+   -- ,c2_customer_no = src.c2_customer_no
+      ,wfs_product_ind = src.wfs_product_ind
+      ,customer_group = src.customer_group
+      ,sc_flag = src.sc_flag
+      ,cc_flag = src.cc_flag
+      ,pl_flag = src.pl_flag
+      ,id_number = src.id_number
+      ,subscriber_key = src.subscriber_key
+      ,gender = src.gender
+      ,age = src.age
+      ,age_group = src.age_group
+      ,generation = src.generation
+      ,birth_date = src.birth_date
+      ,race = src.race
+      ,province = src.province
+      ,marital_status = src.marital_status
+      ,source_of_income_desc = src.source_of_income_desc
+      ,title = src.title
+      ,first_name = src.first_name
+      ,last_name = src.last_name
+      ,title_initial_surname = src.title_initial_surname
+      ,cell_no = src.cell_no
+      ,emailaddress = src.emailaddress
+      ,loyalty_tiers = src.loyalty_tiers
+      ,months_since_spend = src.months_since_spend
+      ,app_ind = src.app_ind
+      ,sc_account_no = src.sc_account_no
+      ,sc_account_status = src.sc_account_status
+      ,sc_delinquency_cycle = src.sc_delinquency_cycle
+      ,sc_credit_limit = src.sc_credit_limit
+      ,sc_current_balance = src.sc_current_balance
+      ,sc_otb = src.sc_otb
+      ,sc_date_opened = src.sc_date_opened
+      ,sc_date_closed = src.sc_date_closed
+      ,sc_date_chgoff = src.sc_date_chgoff
+      ,sc_date_last_statement = src.sc_date_last_statement
+      ,sc_mob = src.sc_mob
+      ,sc_shopable_ind = src.sc_shopable_ind
+      ,sc_block_code1 = src.sc_block_code1
+      ,sc_block_code2 = src.sc_block_code2
+      ,sc_bureau_score = src.sc_bureau_score
+      ,sc_behaviour_score01 = src.sc_behaviour_score01
+      ,sc_class = src.sc_class
+      ,sc_sec_holder_cnt = src.sc_sec_holder_cnt
+      ,customer_key = src.customer_key
+      ,cc_account_no = src.cc_account_no
+      ,cc_colour = src.cc_colour
+      ,cc_account_status = src.cc_account_status
+      ,cc_shopable_ind = src.cc_shopable_ind
+      ,cc_date_opened = src.cc_date_opened
+      ,cc_date_closed = src.cc_date_closed
+      ,cc_mob = src.cc_mob
+      ,cc_current_balance = src.cc_current_balance
+      ,cc_credit_limit = src.cc_credit_limit
+      ,cc_otb = src.cc_otb
+      ,cc_secondary_card_ind = src.cc_secondary_card_ind
+      ,cc_class = src.cc_class
+      ,cc_sec_holder_cnt = src.cc_sec_holder_cnt
+      ,pl_account_no = src.pl_account_no
+      ,pl_account_status = src.pl_account_status
+      ,pl_delinquency_cycle = src.pl_delinquency_cycle
+      ,pl_credit_limit = src.pl_credit_limit
+      ,pl_current_balance = src.pl_current_balance
+      ,pl_otb = src.pl_otb
+      ,pl_date_opened = src.pl_date_opened
+      ,pl_date_closed = src.pl_date_closed
+      ,pl_date_chgoff = src.pl_date_chgoff
+      ,pl_date_last_statement = src.pl_date_last_statement
+      ,pl_mob = src.pl_mob
+      ,pl_shopable_ind = src.pl_shopable_ind
+      ,pl_block_code1 = src.pl_block_code1
+      ,pl_block_code2 = src.pl_block_code2
+      ,pl_bureau_score = src.pl_bureau_score
+      ,pl_behaviour_score01 = src.pl_behaviour_score01
+      ,pl_class = src.pl_class
+      ,littleworld_flag = src.littleworld_flag
+      ,myschool_flag = src.myschool_flag
+      ,wwdifference_flag = src.wwdifference_flag
+      ,wodifference_flag = src.wodifference_flag
+      ,discovery_flag = src.discovery_flag
+      ,sc_secholder_flag = src.sc_secholder_flag
+      ,cc_secholder_flag = src.cc_secholder_flag
+      ,predictedincome = src.predictedincome
+      ,active_accounts = src.active_accounts
+      ,retail_accounts = src.retail_accounts
+      ,cc_accounts = src.cc_accounts
+      ,pl_accounts = src.pl_accounts
+      ,microloan_accounts = src.microloan_accounts
+      ,homeloan_accounts = src.homeloan_accounts
+      ,permanent_work = src.permanent_work
+      ,totaldebt = src.totaldebt
+      ,retailbalance = src.retailbalance
+      ,creditcardbalance = src.creditcardbalance
+      ,personalloanbalance = src.personalloanbalance
+      ,microloanbalance = src.microloanbalance
+      ,homeloanbalance = src.homeloanbalance
+      ,vehiclebalanceabf = src.vehiclebalanceabf
+      ,deceasedindyn = src.deceasedindyn
+      ,id_rank = src.id_rank
+      
+   from customer_profiles_valid as src
+   where tgt.year_month = src.year_month and tgt.c2_customer_no = src.c2_customer_no
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS v_upd_rows_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (% update) : %', now_fmt, c_target_tbl, v_upd_rows_cnt;
+   
+
+   insert into dw_prf.customer_profile_mly (
+   --    rowid,
+         record_created_date,
+         last_updated_date,
+         year_month,
+         c2_customer_no,
+         wfs_product_ind,
+         customer_group,
+         sc_flag,
+         cc_flag,
+         pl_flag,
+         id_number,
+         subscriber_key,
+         gender,
+         age,
+         age_group,
+         generation,
+         birth_date,
+         race,
+         province,
+         marital_status,
+         source_of_income_desc,
+         title,
+         first_name,
+         last_name,
+         title_initial_surname,
+         cell_no,
+         emailaddress,
+         loyalty_tiers,
+         months_since_spend,
+         app_ind,
+         sc_account_no,
+         sc_account_status,
+         sc_delinquency_cycle,
+         sc_credit_limit,
+         sc_current_balance,
+         sc_otb,
+         sc_date_opened,
+         sc_date_closed,
+         sc_date_chgoff,
+         sc_date_last_statement,
+         sc_mob,
+         sc_shopable_ind,
+         sc_block_code1,
+         sc_block_code2,
+         sc_bureau_score,
+         sc_behaviour_score01,
+         sc_class,
+         sc_sec_holder_cnt,
+         customer_key,
+         cc_account_no,
+         cc_colour,
+         cc_account_status,
+         cc_shopable_ind,
+         cc_date_opened,
+         cc_date_closed,
+         cc_mob,
+         cc_current_balance,
+         cc_credit_limit,
+         cc_otb,
+         cc_secondary_card_ind,
+         cc_class,
+         cc_sec_holder_cnt,
+         pl_account_no,
+         pl_account_status,
+         pl_delinquency_cycle,
+         pl_credit_limit,
+         pl_current_balance,
+         pl_otb,
+         pl_date_opened,
+         pl_date_closed,
+         pl_date_chgoff,
+         pl_date_last_statement,
+         pl_mob,
+         pl_shopable_ind,
+         pl_block_code1,
+         pl_block_code2,
+         pl_bureau_score,
+         pl_behaviour_score01,
+         pl_class,
+         littleworld_flag,
+         myschool_flag,
+         wwdifference_flag,
+         wodifference_flag,
+         discovery_flag,
+         sc_secholder_flag,
+         cc_secholder_flag,
+         predictedincome,
+         active_accounts,
+         retail_accounts,
+         cc_accounts,
+         pl_accounts,
+         microloan_accounts,
+         homeloan_accounts,
+         permanent_work,
+         totaldebt,
+         retailbalance,
+         creditcardbalance,
+         personalloanbalance,
+         microloanbalance,
+         homeloanbalance,
+         vehiclebalanceabf,
+         deceasedindyn,
+         id_rank
+   )
+      select
+   --    src.rowid,
+         current_date as record_created_date,
+         current_date as last_updated_date,
+         src.year_month,
+         src.c2_customer_no,
+         src.wfs_product_ind,
+         src.customer_group,
+         src.sc_flag,
+         src.cc_flag,
+         src.pl_flag,
+         src.id_number,
+         src.subscriber_key,
+         src.gender,
+         src.age,
+         src.age_group,
+         src.generation,
+         src.birth_date,
+         src.race,
+         src.province,
+         src.marital_status,
+         src.source_of_income_desc,
+         src.title,
+         src.first_name,
+         src.last_name,
+         src.title_initial_surname,
+         src.cell_no,
+         src.emailaddress,
+         src.loyalty_tiers,
+         src.months_since_spend,
+         src.app_ind,
+         src.sc_account_no,
+         src.sc_account_status,
+         src.sc_delinquency_cycle,
+         src.sc_credit_limit,
+         src.sc_current_balance,
+         src.sc_otb,
+         src.sc_date_opened,
+         src.sc_date_closed,
+         src.sc_date_chgoff,
+         src.sc_date_last_statement,
+         src.sc_mob,
+         src.sc_shopable_ind,
+         src.sc_block_code1,
+         src.sc_block_code2,
+         src.sc_bureau_score,
+         src.sc_behaviour_score01,
+         src.sc_class,
+         src.sc_sec_holder_cnt,
+         src.customer_key,
+         src.cc_account_no,
+         src.cc_colour,
+         src.cc_account_status,
+         src.cc_shopable_ind,
+         src.cc_date_opened,
+         src.cc_date_closed,
+         src.cc_mob,
+         src.cc_current_balance,
+         src.cc_credit_limit,
+         src.cc_otb,
+         src.cc_secondary_card_ind,
+         src.cc_class,
+         src.cc_sec_holder_cnt,
+         src.pl_account_no,
+         src.pl_account_status,
+         src.pl_delinquency_cycle,
+         src.pl_credit_limit,
+         src.pl_current_balance,
+         src.pl_otb,
+         src.pl_date_opened,
+         src.pl_date_closed,
+         src.pl_date_chgoff,
+         src.pl_date_last_statement,
+         src.pl_mob,
+         src.pl_shopable_ind,
+         src.pl_block_code1,
+         src.pl_block_code2,
+         src.pl_bureau_score,
+         src.pl_behaviour_score01,
+         src.pl_class,
+         src.littleworld_flag,
+         src.myschool_flag,
+         src.wwdifference_flag,
+         src.wodifference_flag,
+         src.discovery_flag,
+         src.sc_secholder_flag,
+         src.cc_secholder_flag,
+         src.predictedincome,
+         src.active_accounts,
+         src.retail_accounts,
+         src.cc_accounts,
+         src.pl_accounts,
+         src.microloan_accounts,
+         src.homeloan_accounts,
+         src.permanent_work,
+         src.totaldebt,
+         src.retailbalance,
+         src.creditcardbalance,
+         src.personalloanbalance,
+         src.microloanbalance,
+         src.homeloanbalance,
+         src.vehiclebalanceabf,
+         src.deceasedindyn,
+         src.id_rank
+      from customer_profiles_valid src
+       left outer join dw_prf.customer_profile_mly tgt
+         on src.year_month = tgt.year_month
+         and src.c2_customer_no = tgt.c2_customer_no
+       where tgt.c2_customer_no is null 
+   ;
+   commit;
+   
+
+   GET DIAGNOSTICS v_ins_rows_cnt := ROW_COUNT;
+        
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise info '%  affected rows (% insert) : %', now_fmt, c_target_tbl, v_ins_rows_cnt;
+
+
+   -- log update ------------------------------------------------------
+   call dw_admin.sp_log_update_counts(
+      c_thisproc, 
+      null,             -- p_pid (specify if not current session)
+      v_ins_rows_cnt,   -- p_ins_rows
+      v_upd_rows_cnt,   -- p_upd_rows
+      null              -- p_del_rows
+   );
+   
+ 
+   v_msg:= to_char(sysdate,'yyyy-mm-dd hh24:mi:ss ')||c_thisproc||' executed successfully - rows inserted: '||v_ins_rows_cnt||' - rows updated: '||v_upd_rows_cnt;
+   raise notice '%',v_msg;  -- display in cosole
+ 
+
+
+--   raise notice '-----';
+--   v_date_to_do = dateadd(month,1,v_date_to_do);
+
+--end loop;
+  
+
+   select to_char(timezone('Africa/Johannesburg',current_timestamp::timestamptz),'yyyy-mm-dd hh24:mi:ss') into now_fmt;
+   raise notice '% customer_profile_mly ends', now_fmt;  -- display in cosole
+
+   
+EXCEPTION WHEN OTHERS THEN
+    RAISE INFO 'error message SQLERRM %', SQLERRM;
+
+
+end;
+
+$$
+;
+
+-- Permissions
+
+GRANT ALL ON PROCEDURE dw_prf.sp_customer_profile_mly(int4) TO ;
